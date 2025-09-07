@@ -1,9 +1,12 @@
-// ==================== PowerUpManager3D.cs ====================
-// Arquivo: PowerUpManager3D.cs
-// Anexe este script ao GameObject "GameManager"
-
+﻿using System;
 using UnityEngine;
 using UnityEngine.UI;
+
+/// <summary>
+/// PowerUpManager3D - gerencia powerups 3D e a UI dos botões.
+/// - SetupShopButtons: usa Resources.FindObjectsOfTypeAll<Button>() e filtra botões da cena (compatível).
+/// - Chama efeitos no MeteorController3D: DeflectMeteor() / DestroyMeteor() / DivertMeteor()
+/// </summary>
 
 [System.Serializable]
 public class PowerUp3D
@@ -33,36 +36,88 @@ public class PowerUpManager3D : MonoBehaviour
         UpdateShop();
     }
 
+    // Substitua por esta implementação (mantém o resto do arquivo)
     void InitializePowerUps3D()
     {
-        powerUps[0] = new PowerUp3D { name = "Click Multiplier", cost = 10, description = "5x click power" };
-        powerUps[1] = new PowerUp3D { name = "Shield", cost = 50, description = "3D Energy Shield", visualEffect = shieldEffect };
-        powerUps[2] = new PowerUp3D { name = "Laser", cost = 300, description = "Orbital Laser Platform", visualEffect = laserEffect };
-        powerUps[3] = new PowerUp3D { name = "Wormhole", cost = 2000, description = "Spatial Rift Generator", visualEffect = wormholeEffect };
+        // Ajuste os custos/nomes conforme sua ordem esperada:
+        // index 0 = Multiplicador, 1 = Laser, 2 = Wormhole, 3 = Last Chance
+        powerUps[0] = new PowerUp3D { name = "Multiplicador", cost = 10, description = "+5 cliques por compra" };
+        powerUps[1] = new PowerUp3D { name = "Laser", cost = 150, description = "Destrói o meteoro atual" };
+        powerUps[2] = new PowerUp3D { name = "Wormhole", cost = 200, description = "Teleporta temporariamente o planeta" };
+        powerUps[3] = new PowerUp3D { name = "Última Chance", cost = 250, description = "Evacua parte da população (efeito visual)" };
     }
 
     void SetupShopButtons()
     {
-        Button[] shopButtons = Object.FindObjectsByType<Button>(FindObjectsSortMode.None);
-
-        for (int i = 0; i < powerUps.Length && i < shopButtons.Length; i++)
+        // Tenta encontrar um painel explicitamente chamado "ItemsContent" (o mesmo que você usou no Canvas)
+        GameObject itemsContent = GameObject.Find("ItemsContent");
+        if (itemsContent != null)
         {
-            powerUps[i].buyButton = shopButtons[i];
+            // percorre os filhos em ordem (top → bottom conforme Hierarchy)
+            int childCount = itemsContent.transform.childCount;
+            for (int i = 0; i < Mathf.Min(childCount, powerUps.Length); i++)
+            {
+                var child = itemsContent.transform.GetChild(i);
+                var btn = child.GetComponentInChildren<Button>();
+                if (btn != null)
+                {
+                    powerUps[i].buyButton = btn;
+                    int index = i; // captura variável
+                    powerUps[i].buyButton.onClick.RemoveAllListeners();
+                    powerUps[i].buyButton.onClick.AddListener(() => BuyPowerUp3D(index));
+                }
+            }
+            Debug.Log("[PowerUpManager3D] SetupShopButtons: mapped buttons from ItemsContent children.");
+            return;
+        }
+
+        // fallback antigo: tenta detectar botões na cena (se você não tiver um ItemsContent com esse nome)
+        var allButtons = Resources.FindObjectsOfTypeAll(typeof(Button)) as Button[];
+        if (allButtons == null || allButtons.Length == 0)
+        {
+            Debug.LogWarning("[PowerUpManager3D] No UI Buttons found in scene via Resources.FindObjectsOfTypeAll.");
+            return;
+        }
+
+        var sceneButtons = new System.Collections.Generic.List<Button>();
+        foreach (var b in allButtons)
+        {
+            if (b == null) continue;
+            try
+            {
+                if (b.gameObject.scene.IsValid() && b.gameObject.activeInHierarchy)
+                    sceneButtons.Add(b);
+            }
+            catch { }
+        }
+
+        for (int i = 0; i < powerUps.Length && i < sceneButtons.Count; i++)
+        {
+            powerUps[i].buyButton = sceneButtons[i];
             int index = i;
+            powerUps[i].buyButton.onClick.RemoveAllListeners();
             powerUps[i].buyButton.onClick.AddListener(() => BuyPowerUp3D(index));
         }
+        Debug.Log("[PowerUpManager3D] SetupShopButtons: mapped buttons by scene detection (fallback).");
     }
+
 
     public void BuyPowerUp3D(int index)
     {
         if (index >= powerUps.Length) return;
 
         PowerUp3D powerUp = powerUps[index];
+        if (GameManager3D.Instance == null)
+        {
+            Debug.LogWarning("[PowerUpManager3D] GameManager3D.Instance is null. Cannot buy.");
+            return;
+        }
 
         if (GameManager3D.Instance.totalClicks >= powerUp.cost && !powerUp.purchased)
         {
             GameManager3D.Instance.totalClicks -= powerUp.cost;
-            GameManager3D.Instance.UpdateUI();
+            // try UpdateUI if exists
+            try { GameManager3D.Instance.UpdateUI(); } catch { }
 
             powerUp.purchased = true;
             ApplyPowerUpEffect3D(index);
@@ -74,6 +129,8 @@ public class PowerUpManager3D : MonoBehaviour
 
     void ApplyPowerUpEffect3D(int index)
     {
+        if (GameManager3D.Instance == null) return;
+
         switch (index)
         {
             case 0: // Click Multiplier
@@ -112,22 +169,26 @@ public class PowerUpManager3D : MonoBehaviour
 
     public bool CheckDefenses(int waveNumber)
     {
+        var meteorObj = GameManager3D.Instance?.meteor;
+        var mc = meteorObj != null ? meteorObj.GetComponent<MeteorController3D>() : null;
+        if (mc == null) return false;
+
         if (waveNumber <= 2 && powerUps[1].purchased) // 3D Shield
         {
             Debug.Log("3D Shield deflected meteor!");
-            GameManager3D.Instance.meteor.GetComponent<MeteorController3D>().DeflectMeteor();
+            mc.DeflectMeteor();
             return true;
         }
 
         if (waveNumber <= 3 && powerUps[2].purchased) // 3D Laser
         {
-            GameManager3D.Instance.meteor.GetComponent<MeteorController3D>().DestroyMeteor();
+            mc.DestroyMeteor();
             return true;
         }
 
         if (waveNumber <= 4 && powerUps[3].purchased) // 3D Wormhole
         {
-            GameManager3D.Instance.meteor.GetComponent<MeteorController3D>().DivertMeteor();
+            mc.DivertMeteor();
             return true;
         }
 
@@ -140,7 +201,7 @@ public class PowerUpManager3D : MonoBehaviour
         {
             if (powerUps[i].buyButton)
             {
-                bool canAfford = GameManager3D.Instance.totalClicks >= powerUps[i].cost;
+                bool canAfford = (GameManager3D.Instance != null) && (GameManager3D.Instance.totalClicks >= powerUps[i].cost);
                 bool notPurchased = !powerUps[i].purchased;
 
                 powerUps[i].buyButton.interactable = canAfford && notPurchased;
@@ -159,17 +220,11 @@ public class PowerUpManager3D : MonoBehaviour
 
     public void ResetPowerUps()
     {
-        // Destroy visual effects
-        for (int i = 1; i < powerUps.Length; i++)
+        // Destroy visual effects (tag-based or object-based cleanup)
+        GameObject[] effects = GameObject.FindGameObjectsWithTag("PowerUpEffect");
+        foreach (GameObject effect in effects)
         {
-            if (powerUps[i].visualEffect)
-            {
-                GameObject[] effects = GameObject.FindGameObjectsWithTag("PowerUpEffect");
-                foreach (GameObject effect in effects)
-                {
-                    Destroy(effect);
-                }
-            }
+            Destroy(effect);
         }
 
         // Reset purchased status
@@ -178,7 +233,11 @@ public class PowerUpManager3D : MonoBehaviour
             powerUps[i].purchased = false;
         }
 
-        GameManager3D.Instance.clickMultiplier = 1;
+        if (GameManager3D.Instance != null)
+        {
+            GameManager3D.Instance.clickMultiplier = 1;
+        }
+
         UpdateShop();
     }
 }
